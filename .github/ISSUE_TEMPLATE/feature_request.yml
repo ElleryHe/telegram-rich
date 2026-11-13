@@ -1,0 +1,19 @@
+name: Feature Request
+description: Propose a new Bot API feature, normalization rule, or ergonomic helper
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Motivation / Use Case
+      description: What problem or Telegram Bot API capability are you trying to address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or Behavior
+      description: Sketch how you would expect this to work in `telegram-rich`.
+    validations:
+      required: true
