@@ -79,6 +79,24 @@ pub enum Block {
     },
     /// A standalone media element.
     Media(Media),
+    /// A media collage (`<tg-collage>`), grouping multiple visual media elements.
+    Collage {
+        /// Visual media elements inside the collage.
+        media: Vec<Media>,
+        /// Optional caption (`<figcaption>`).
+        caption: Option<Vec<Inline>>,
+        /// Optional caption credit (`<cite>` inside `<figcaption>`).
+        credit: Option<Vec<Inline>>,
+    },
+    /// A media slideshow (`<tg-slideshow>`), displaying a swipeable gallery of visual media.
+    Slideshow {
+        /// Visual media elements inside the slideshow.
+        media: Vec<Media>,
+        /// Optional caption (`<figcaption>`).
+        caption: Option<Vec<Inline>>,
+        /// Optional caption credit (`<cite>` inside `<figcaption>`).
+        credit: Option<Vec<Inline>>,
+    },
     /// A table; cells contain inline content only.
     Table(Table),
     /// A disclosure block (`<details>`).
@@ -294,6 +312,11 @@ impl Document {
             for b in blocks {
                 match b {
                     Block::Media(m) => f(m),
+                    Block::Collage { media, .. } | Block::Slideshow { media, .. } => {
+                        for m in media {
+                            f(m);
+                        }
+                    }
                     Block::List { items, .. } => {
                         for it in items {
                             walk(&mut it.blocks, f);
@@ -313,6 +336,9 @@ impl Document {
             for b in blocks {
                 match b {
                     Block::Media(m) => out.push(m),
+                    Block::Collage { media, .. } | Block::Slideshow { media, .. } => {
+                        out.extend(media.iter());
+                    }
                     Block::List { items, .. } => {
                         for it in items {
                             walk(&it.blocks, out);

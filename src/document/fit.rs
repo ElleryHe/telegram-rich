@@ -130,26 +130,111 @@ fn media_as_link(m: &Media) -> Block {
     }])
 }
 
-fn limit_media(blocks: &mut [Block], left: &mut usize) {
-    for b in blocks {
+fn limit_media(blocks: &mut Vec<Block>, left: &mut usize) {
+    let input = std::mem::take(blocks);
+    let mut out = Vec::with_capacity(input.len());
+    for b in input {
         match b {
             Block::Media(m) => {
                 if *left == 0 {
-                    *b = media_as_link(m);
+                    out.push(media_as_link(&m));
                 } else {
                     *left -= 1;
+                    out.push(Block::Media(m));
                 }
             }
-            Block::List { items, .. } => {
-                for it in items {
+            Block::Collage {
+                media,
+                caption,
+                credit,
+            } => {
+                limit_media_group(media, caption, credit, false, left, &mut out);
+            }
+            Block::Slideshow {
+                media,
+                caption,
+                credit,
+            } => {
+                limit_media_group(media, caption, credit, true, left, &mut out);
+            }
+            Block::List {
+                ordered,
+                start,
+                mut items,
+            } => {
+                for it in &mut items {
                     limit_media(&mut it.blocks, left);
                 }
+                out.push(Block::List {
+                    ordered,
+                    start,
+                    items,
+                });
             }
-            Block::Quote { blocks, .. } | Block::Details { blocks, .. } => {
-                limit_media(blocks, left)
+            Block::Quote { mut blocks, credit } => {
+                limit_media(&mut blocks, left);
+                out.push(Block::Quote { blocks, credit });
             }
-            _ => {}
+            Block::Details {
+                summary,
+                mut blocks,
+                open,
+            } => {
+                limit_media(&mut blocks, left);
+                out.push(Block::Details {
+                    summary,
+                    blocks,
+                    open,
+                });
+            }
+            other => out.push(other),
         }
+    }
+    *blocks = out;
+}
+
+fn limit_media_group(
+    media: Vec<Media>,
+    caption: Option<Vec<Inline>>,
+    credit: Option<Vec<Inline>>,
+    is_slideshow: bool,
+    left: &mut usize,
+    out: &mut Vec<Block>,
+) {
+    let keep = (*left).min(media.len());
+    *left -= keep;
+    let mut iter = media.into_iter();
+    let mut kept: Vec<Media> = iter.by_ref().take(keep).collect();
+    let dropped: Vec<Media> = iter.collect();
+
+    match kept.len() {
+        0 => {}
+        1 => {
+            let mut single = kept.pop().unwrap();
+            if single.caption.is_none() && single.credit.is_none() {
+                single.caption = caption;
+                single.credit = credit;
+            }
+            out.push(Block::Media(single));
+        }
+        _ => {
+            if is_slideshow {
+                out.push(Block::Slideshow {
+                    media: kept,
+                    caption,
+                    credit,
+                });
+            } else {
+                out.push(Block::Collage {
+                    media: kept,
+                    caption,
+                    credit,
+                });
+            }
+        }
+    }
+    for m in dropped {
+        out.push(media_as_link(&m));
     }
 }
 
@@ -280,14 +365,63 @@ fn limit_depth(blocks: Vec<Block>, depth: usize, max: usize) -> Vec<Block> {
                 m.credit = limit_opt_inline(m.credit, depth, max);
                 out.push(Block::Media(m));
             }
+            Block::Collage {
+                media,
+                caption,
+                credit,
+            } => {
+                limit_media_group_depth(media, caption, credit, false, depth, max, &mut out);
+            }
+            Block::Slideshow {
+                media,
+                caption,
+                credit,
+            } => {
+                limit_media_group_depth(media, caption, credit, true, depth, max, &mut out);
+            }
             other => out.push(other),
         }
     }
     out
 }
 
-// ---------------------------------------------------------------------------
-// Step 4: truncation
+fn limit_media_group_depth(
+    mut media: Vec<Media>,
+    caption: Option<Vec<Inline>>,
+    credit: Option<Vec<Inline>>,
+    is_slideshow: bool,
+    depth: usize,
+    max: usize,
+    out: &mut Vec<Block>,
+) {
+    if depth + 1 > max {
+        for mut m in media {
+            m.caption = limit_opt_inline(m.caption, depth, max);
+            m.credit = limit_opt_inline(m.credit, depth, max);
+            out.push(Block::Media(m));
+        }
+        return;
+    }
+    for m in &mut media {
+        m.caption = limit_opt_inline(m.caption.take(), depth + 1, max);
+        m.credit = limit_opt_inline(m.credit.take(), depth + 1, max);
+    }
+    let caption = limit_opt_inline(caption, depth, max);
+    let credit = limit_opt_inline(credit, depth, max);
+    if is_slideshow {
+        out.push(Block::Slideshow {
+            media,
+            caption,
+            credit,
+        });
+    } else {
+        out.push(Block::Collage {
+            media,
+            caption,
+            credit,
+        });
+    }
+}
 
 /// Takes blocks while they fit into `budget`, partially truncating the first
 /// block that does not fit. Returns the kept blocks and whether anything was
@@ -474,12 +608,75 @@ fn truncate_block(b: Block, budget: &Cost, ellipsis: &str) -> Option<Block> {
             })
         }
         Block::Table(t) => truncate_table(t, &inner),
+        Block::Collage {
+            media,
+            caption,
+            credit,
+        } => truncate_media_group(media, caption, credit, false, &inner),
+        Block::Slideshow {
+            media,
+            caption,
+            credit,
+        } => truncate_media_group(media, caption, credit, true, &inner),
         // Atomic blocks.
         Block::Media(_)
         | Block::Divider
         | Block::Anchor(_)
         | Block::MathBlock(_)
         | Block::Buttons { .. } => None,
+    }
+}
+
+fn truncate_media_group(
+    media: Vec<Media>,
+    caption: Option<Vec<Inline>>,
+    credit: Option<Vec<Inline>>,
+    is_slideshow: bool,
+    budget: &Cost,
+) -> Option<Block> {
+    let cap_chars = caption.as_deref().map(inline_chars).unwrap_or(0)
+        + credit.as_deref().map(inline_chars).unwrap_or(0);
+    let (mut chars, kept_caption, kept_credit) = match budget.chars.checked_sub(cap_chars) {
+        Some(rem) => (rem, caption, credit),
+        None => (budget.chars, None, None),
+    };
+    let mut blocks = budget.blocks;
+    let mut media_left = budget.media;
+    let mut kept = Vec::new();
+    for m in media {
+        let item_chars = m.caption.as_deref().map(inline_chars).unwrap_or(0)
+            + m.credit.as_deref().map(inline_chars).unwrap_or(0);
+        if blocks == 0 || media_left == 0 || item_chars > chars {
+            break;
+        }
+        blocks -= 1;
+        media_left -= 1;
+        chars -= item_chars;
+        kept.push(m);
+    }
+    match kept.len() {
+        0 => None,
+        1 => {
+            let mut single = kept.pop().unwrap();
+            if single.caption.is_none() && single.credit.is_none() {
+                single.caption = kept_caption;
+                single.credit = kept_credit;
+            }
+            Some(Block::Media(single))
+        }
+        _ => Some(if is_slideshow {
+            Block::Slideshow {
+                media: kept,
+                caption: kept_caption,
+                credit: kept_credit,
+            }
+        } else {
+            Block::Collage {
+                media: kept,
+                caption: kept_caption,
+                credit: kept_credit,
+            }
+        }),
     }
 }
 

@@ -195,3 +195,51 @@ fn empty_input() {
     assert_eq!(out.html, "");
     assert!(out.document.is_empty());
 }
+
+#[test]
+fn heading_offset_demotes_and_clamps_to_h6() {
+    let mut opts = base();
+    opts.heading_offset = 2;
+    let out = normalize(
+        "<h1>One</h1><h2>Two</h2><h4>Four</h4><h5>Five</h5><h6>Six</h6>",
+        &opts,
+        &FitOptions::default(),
+    );
+    assert_eq!(
+        out.html,
+        "<h3>One</h3><h4>Two</h4><h6>Four</h6><h6>Five</h6><h6>Six</h6>"
+    );
+}
+
+#[test]
+fn group_consecutive_media_collages_and_slideshows() {
+    let mut opts = base();
+    opts.group_consecutive_media = true;
+
+    // 1 standalone image stays standalone; 2+ visual items become a collage; audio breaks runs.
+    let input = concat!(
+        r#"<p>Lead</p><img src="/single.jpg"><p>Gallery</p>"#,
+        r#"<img src="/1.jpg"><img src="/2.jpg"><video src="/3.mp4"></video>"#,
+        r#"<audio src="/a.mp3"></audio>"#,
+        r#"<figure><img src="/f1.jpg"><img src="/f2.jpg"><figcaption>Cap <cite>Ed</cite></figcaption></figure>"#,
+    );
+    let out = normalize(input, &opts, &FitOptions::default());
+    assert_eq!(
+        out.html,
+        concat!(
+            r#"<p>Lead</p><img src="https://example.com/single.jpg"/><p>Gallery</p>"#,
+            r#"<tg-collage><img src="https://example.com/1.jpg"/><img src="https://example.com/2.jpg"/><video src="https://example.com/3.mp4"></video></tg-collage>"#,
+            r#"<audio src="https://example.com/a.mp3"></audio>"#,
+            r#"<tg-collage><img src="https://example.com/f1.jpg"/><img src="https://example.com/f2.jpg"/><figcaption>Cap<cite>Ed</cite></figcaption></tg-collage>"#,
+        )
+    );
+
+    // > MAX_COLLAGE_MEDIA (11 items) switches to <tg-slideshow>.
+    let many: String = (1..=11)
+        .map(|i| format!(r#"<img src="/{i}.jpg">"#))
+        .collect();
+    let out_many = normalize(&many, &opts, &FitOptions::default());
+    assert!(out_many.html.starts_with("<tg-slideshow>"));
+    assert!(out_many.html.ends_with("</tg-slideshow>"));
+    assert_eq!(out_many.stats.media, 11);
+}

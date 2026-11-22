@@ -19,7 +19,7 @@
 
 mod parse;
 
-pub use parse::{ParseOptions, parse};
+pub use parse::{MAX_COLLAGE_MEDIA, ParseOptions, parse};
 
 use crate::document::{Document, FitOptions};
 use crate::limits::Stats;

@@ -98,6 +98,24 @@ fn block_stats(b: &Block, depth: usize, s: &mut Stats) {
             opt_inlines_stats(credit, depth, s);
         }
         Block::Media(m) => media_stats(m, depth, s),
+        Block::Collage {
+            media,
+            caption,
+            credit,
+        }
+        | Block::Slideshow {
+            media,
+            caption,
+            credit,
+        } => {
+            for m in media {
+                s.blocks += 1;
+                bump_depth(s, depth + 1);
+                media_stats(m, depth + 1, s);
+            }
+            opt_inlines_stats(caption, depth, s);
+            opt_inlines_stats(credit, depth, s);
+        }
         Block::Table(t) => table_stats(t, depth, s),
         Block::Details {
             summary, blocks, ..

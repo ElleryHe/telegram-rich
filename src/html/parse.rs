@@ -8,6 +8,11 @@ use crate::document::{
     Align, Block, Document, Inline, ListItem, Media, MediaKind, Table, TableCell, VAlign,
 };
 
+/// Maximum number of consecutive visual media items merged into a
+/// [`Block::Collage`] when [`ParseOptions::group_consecutive_media`] is enabled.
+/// Runs longer than this threshold become a [`Block::Slideshow`].
+pub const MAX_COLLAGE_MEDIA: usize = 10;
+
 /// Options for [`parse`](super::parse).
 #[derive(Debug, Clone, Default)]
 pub struct ParseOptions {
@@ -16,6 +21,14 @@ pub struct ParseOptions {
     pub base_url: Option<Url>,
     /// Keep 1×1 images (tracking pixels). Off by default.
     pub keep_tracking_pixels: bool,
+    /// Offset added to parsed HTML heading levels (`h1`–`h6`), clamped to `h6`.
+    /// For example, `2` demotes `h1` → `h3` and `h2` → `h4`, useful when the
+    /// caller prepends its own `h1`/`h2` article title. Defaults to `0`.
+    pub heading_offset: u8,
+    /// Merge runs of 2 or more consecutive visual media blocks (photos, videos,
+    /// animations) into a [`Block::Collage`] (up to [`MAX_COLLAGE_MEDIA`] items)
+    /// or [`Block::Slideshow`] (above [`MAX_COLLAGE_MEDIA`]). Off by default.
+    pub group_consecutive_media: bool,
 }
 
 impl ParseOptions {
@@ -37,7 +50,11 @@ pub fn parse(html: &str, opts: &ParseOptions) -> Document {
     for child in root.children() {
         cx.node(child, &mut pieces);
     }
-    Document::new(pieces_to_blocks(pieces))
+    let mut blocks = pieces_to_blocks(pieces);
+    if opts.group_consecutive_media {
+        blocks = group_consecutive_media_blocks(blocks);
+    }
+    Document::new(blocks)
 }
 
 /// Output of the converter: inline content, a lifted block, or a paragraph break.
@@ -485,7 +502,10 @@ impl Cx<'_> {
                 out.push(Piece::Break);
             }
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-                let level = name.as_bytes()[1] - b'0';
+                let raw_level = name.as_bytes()[1] - b'0';
+                let level = raw_level
+                    .saturating_add(self.opts.heading_offset)
+                    .clamp(1, 6);
                 let pieces = self.child_pieces(n);
                 out.push(Piece::Break);
                 for b in blocks_with(pieces, |content| Block::Heading { level, content }) {
@@ -935,6 +955,76 @@ fn block_to_inlines(b: Block) -> Vec<Inline> {
             href: m.src.clone(),
             content: vec![Inline::Text(m.src)],
         }],
+        Block::Collage { media, .. } | Block::Slideshow { media, .. } => {
+            let mut v = Vec::new();
+            for (i, m) in media.into_iter().enumerate() {
+                if i > 0 {
+                    v.push(Inline::LineBreak);
+                }
+                v.push(Inline::Link {
+                    href: m.src.clone(),
+                    content: vec![Inline::Text(m.src)],
+                });
+            }
+            v
+        }
         Block::Table(_) | Block::Divider | Block::Anchor(_) | Block::Buttons { .. } => Vec::new(),
     }
+}
+
+fn is_visual_media(m: &Media) -> bool {
+    matches!(
+        m.kind,
+        MediaKind::Photo | MediaKind::Video | MediaKind::Animation
+    )
+}
+
+fn flush_media_run(run: &mut Vec<Media>, out: &mut Vec<Block>) {
+    match run.len() {
+        0 => {}
+        1 => out.push(Block::Media(run.pop().unwrap())),
+        _ => {
+            let mut media = std::mem::take(run);
+            // If only the final item carries a caption/credit (e.g. a multi-image `<figure>`),
+            // hoist it onto the collage/slideshow container so Telegram renders it cleanly below.
+            let (caption, credit) = if media[..media.len() - 1]
+                .iter()
+                .all(|m| m.caption.is_none() && m.credit.is_none())
+            {
+                let last = media.last_mut().unwrap();
+                (last.caption.take(), last.credit.take())
+            } else {
+                (None, None)
+            };
+            if media.len() <= MAX_COLLAGE_MEDIA {
+                out.push(Block::Collage {
+                    media,
+                    caption,
+                    credit,
+                });
+            } else {
+                out.push(Block::Slideshow {
+                    media,
+                    caption,
+                    credit,
+                });
+            }
+        }
+    }
+}
+
+fn group_consecutive_media_blocks(blocks: Vec<Block>) -> Vec<Block> {
+    let mut out = Vec::with_capacity(blocks.len());
+    let mut run: Vec<Media> = Vec::new();
+    for b in blocks {
+        match b {
+            Block::Media(m) if is_visual_media(&m) => run.push(m),
+            other => {
+                flush_media_run(&mut run, &mut out);
+                out.push(other);
+            }
+        }
+    }
+    flush_media_run(&mut run, &mut out);
+    out
 }

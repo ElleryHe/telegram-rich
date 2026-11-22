@@ -37,7 +37,7 @@ client or bot framework of your choice.
 
 ```toml
 [dependencies]
-telegram-rich = "0.0.1"
+telegram-rich = "0.0.2"
 ```
 
 ```rust

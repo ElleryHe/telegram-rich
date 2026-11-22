@@ -160,3 +160,32 @@ fn media_can_be_rewritten() {
     assert_eq!(doc.to_html(), r#"<img src="tg://photo?id=p1"/>"#);
     assert_eq!(doc.media().len(), 1);
 }
+
+#[test]
+fn collage_respects_media_limit_and_unwraps_single_survivor() {
+    let make_media = |i: usize| Media {
+        kind: MediaKind::Photo,
+        src: format!("https://e.com/{i}.jpg"),
+        caption: None,
+        credit: None,
+        spoiler: false,
+    };
+    let mut doc = Document::new(vec![Block::Collage {
+        media: (0..4).map(make_media).collect(),
+        caption: Some(vec![Inline::text("Group")]),
+        credit: None,
+    }]);
+    let opts = FitOptions {
+        limits: Limits {
+            max_media: 1,
+            ..Limits::TELEGRAM
+        },
+        ..FitOptions::default()
+    };
+    assert!(!doc.fit(&opts));
+    assert_eq!(doc.stats().media, 1);
+    assert!(doc.to_html().starts_with(
+        r#"<figure><img src="https://e.com/0.jpg"/><figcaption>Group</figcaption></figure>"#
+    ));
+    assert!(doc.to_html().contains("https://e.com/1.jpg"));
+}

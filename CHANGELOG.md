@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-11-22
+
+### Added
+
+- `Block::Collage` (`<tg-collage>`) and `Block::Slideshow` (`<tg-slideshow>`) in
+  the `Document` model, with full support in `to_html`, `stats`, `fit`,
+  `media`, and `for_each_media_mut`.
+- `ParseOptions::heading_offset` (default `0`) to demote parsed HTML headings
+  (`h1`–`h6`, clamped to `h6`) when prepending an article title header.
+- `ParseOptions::group_consecutive_media` (default `false`) to automatically
+  merge runs of 2 or more consecutive visual media items (photos, videos,
+  animations) into `<tg-collage>` (up to `MAX_COLLAGE_MEDIA = 10` items) or
+  `<tg-slideshow>` when exceeding `MAX_COLLAGE_MEDIA`.
+
 ## [0.0.1] - 2026-11-13
 
 ### Added

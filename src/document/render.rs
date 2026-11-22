@@ -153,6 +153,16 @@ fn render_block(out: &mut String, b: &Block) {
             out.push_str("</aside>");
         }
         Block::Media(m) => render_media(out, m),
+        Block::Collage {
+            media,
+            caption,
+            credit,
+        } => render_media_group(out, "tg-collage", media, caption, credit),
+        Block::Slideshow {
+            media,
+            caption,
+            credit,
+        } => render_media_group(out, "tg-slideshow", media, caption, credit),
         Block::Table(t) => render_table(out, t),
         Block::Details {
             summary,
@@ -245,6 +255,28 @@ fn render_media(out: &mut String, m: &Media) {
         render_cite(out, &m.credit);
         out.push_str("</figcaption></figure>");
     }
+}
+
+fn render_media_group(
+    out: &mut String,
+    tag: &str,
+    media: &[Media],
+    caption: &Option<Vec<Inline>>,
+    credit: &Option<Vec<Inline>>,
+) {
+    let _ = write!(out, "<{tag}>");
+    for m in media {
+        render_media(out, m);
+    }
+    if caption.is_some() || credit.is_some() {
+        out.push_str("<figcaption>");
+        if let Some(c) = caption {
+            render_inlines(out, c);
+        }
+        render_cite(out, credit);
+        out.push_str("</figcaption>");
+    }
+    let _ = write!(out, "</{tag}>");
 }
 
 fn align_str(a: Align) -> &'static str {
